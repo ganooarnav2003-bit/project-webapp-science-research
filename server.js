@@ -6,7 +6,7 @@ const crypto = require("crypto");
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC = path.join(__dirname, "public");
-const DATA = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, "data");
+const DATA = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : process.env.VERCEL ? "/tmp/notebook-data" : path.join(__dirname, "data");
 const UPLOADS = path.join(DATA, "uploads");
 const DB_FILE = path.join(DATA, "db.json");
 
@@ -606,7 +606,7 @@ function siteMap(req, res) {
     urls.map((u) => `<url><loc>${esc(base + u)}</loc></url>`).join("\n") + `\n</urlset>`);
 }
 
-http.createServer(async (req, res) => {
+async function handler(req, res) {
   try {
     const url = new URL(req.url, "http://localhost");
     if (url.pathname === "/healthz") send(res, 200, { ok: true });
@@ -626,4 +626,10 @@ http.createServer(async (req, res) => {
       else { console.error(e); send(res, 500, { error: "Server error" }); }
     }
   }
-}).listen(PORT, "0.0.0.0", () => console.log(`Study library running on port ${PORT}`));
+}
+
+// `node server.js` runs a normal server; on Vercel the handler is imported by api/index.js instead.
+if (require.main === module) {
+  http.createServer(handler).listen(PORT, "0.0.0.0", () => console.log(`Study library running on port ${PORT}`));
+}
+module.exports = handler;

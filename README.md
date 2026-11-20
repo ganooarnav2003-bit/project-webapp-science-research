@@ -71,3 +71,11 @@ Environment variables:
 - `PUBLIC_URL`, `RAZORPAY_*`, `ANTHROPIC_API_KEY`: see the sections above.
 
 Docker: `docker build -t notebook . && docker run -p 3000:3000 -v notebook-data:/data notebook`
+
+## Vercel
+`vercel.json` + `api/index.js` run the whole app as one serverless function, so importing the repo on
+Vercel works with no build step. **Limits of serverless:** data is saved in `/tmp`, which is temporary
+and not shared between instances, so accounts, uploads and comments can disappear at any time, and
+requests over 4.5 MB are rejected (large uploads fail). The public topic pages, dashboard, plans page,
+and chat search work normally. For real use with accounts/uploads, use a Node host with a persistent
+disk (see Deploying) or move storage to a hosted database/blob store.
