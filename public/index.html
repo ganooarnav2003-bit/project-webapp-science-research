@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Research Notebook</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>🔬 Research Notebook</h1>
+      <p>Your experiments, plus a shared library of study material.</p>
+    </div>
+    <div class="hdr-right">
+      <span id="authArea"></span>
+      <button id="customizeBtn" class="ghost">⚙ Customize</button>
+    </div>
+  </header>
+
+  <nav id="tabs">
+    <button data-view="dashboard" class="active">Dashboard</button>
+    <button data-view="library">Library</button>
+    <button data-view="feed">My subscriptions</button>
+  </nav>
+
+  <aside id="panel" hidden>
+    <h2>Customize dashboard</h2>
+
+    <h3>Widgets <small>(toggle, reorder, resize)</small></h3>
+    <ul id="widgetConfig"></ul>
+
+    <h3>Appearance</h3>
+    <label>Accent color <input type="color" id="accent"></label>
+    <label>Theme
+      <select id="theme">
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </label>
+    <label>Columns
+      <select id="columns">
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+      </select>
+    </label>
+    <label>Dashboard title <input id="dashTitle" maxlength="40"></label>
+
+    <button id="resetBtn" class="danger">Reset to defaults</button>
+    <button id="closePanel">Done</button>
+  </aside>
+
+  <!-- Login / register dialog -->
+  <dialog id="authDialog">
+    <form id="authForm" method="dialog">
+      <h2 id="authTitle">Log in</h2>
+      <input id="authUser" placeholder="Username (3-20 letters/numbers/_)" autocomplete="username" required>
+      <input id="authPass" type="password" placeholder="Password (min 8 characters)" autocomplete="current-password" required>
+      <p id="authError" class="error"></p>
+      <div class="row">
+        <button type="submit" id="authSubmit">Log in</button>
+        <button type="button" id="authSwitch" class="link">Need an account? Register</button>
+        <button type="button" id="authCancel" class="link">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <main>
+    <!-- Personal dashboard -->
+    <div id="view-dashboard" class="view">
+      <div class="dash-head">
+        <button id="dashToggle" class="menu-btn" aria-label="Show or hide dashboard" aria-expanded="false" title="Show / hide dashboard">☰</button>
+        <h2 id="dashHeading"></h2>
+      </div>
+      <section id="dashboard" hidden></section>
+
+      <h2>Experiments</h2>
+      <form id="form">
+        <input id="title" placeholder="Experiment title" required>
+        <input id="hypothesis" placeholder="Hypothesis">
+        <select id="status">
+          <option>Planned</option>
+          <option>Running</option>
+          <option>Completed</option>
+        </select>
+        <button type="submit">Add</button>
+      </form>
+      <ul id="list"></ul>
+    </div>
+
+    <!-- Shared library -->
+    <div id="view-library" class="view" hidden>
+      <h2>Study library</h2>
+      <p class="notice">📚 For study material only (notes, papers, slides, worksheets, data sets). Only upload things you have the right to share.</p>
+
+      <form id="uploadForm" class="card" hidden>
+        <h3>Share a file</h3>
+        <input id="upTitle" placeholder="Title" maxlength="100" required>
+        <input id="upSubject" placeholder="Subject (e.g. Biology)" maxlength="40" required>
+        <input id="upDesc" placeholder="Short description (optional)" maxlength="500">
+        <input id="upFile" type="file" required
+          accept=".pdf,.txt,.md,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.gif,.webp">
+        <label class="check"><input type="checkbox" id="upConfirm" required> This is study/educational material and I have the right to share it.</label>
+        <small>Allowed: PDF, text, Word, PowerPoint, Excel, CSV, images · max 10 MB</small>
+        <button type="submit">Upload</button>
+        <p id="upMsg" class="error"></p>
+      </form>
+      <p id="loginHint" class="empty" hidden>Log in to upload, comment, ask queries and subscribe.</p>
+
+      <div class="filters">
+        <input id="search" type="search" placeholder="Search study material or ask what you're looking for…">
+        <select id="subjectFilter"><option value="">All subjects</option></select>
+      </div>
+      <div id="userBanner" class="card" hidden></div>
+      <div id="libraryList"></div>
+    </div>
+
+    <!-- Subscription feed -->
+    <div id="view-feed" class="view" hidden>
+      <h2>My subscriptions</h2>
+      <div id="subList" class="chips"></div>
+      <div id="feedList"></div>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+  <script src="library.js"></script>
+</body>
+</html>

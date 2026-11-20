@@ -219,3 +219,21 @@ applyAppearance();
 renderList();
 renderDashboard();
 renderConfig();
+
+/* ---------- ☰ show/hide dashboard (hidden by default) ---------- */
+(function () {
+  const btn = $("dashToggle"), dash = $("dashboard");
+  let hidden = true;
+  try { hidden = localStorage.getItem("dashHidden") !== "0"; } catch {}
+  function apply() {
+    dash.hidden = hidden;
+    btn.setAttribute("aria-expanded", String(!hidden));
+    btn.classList.toggle("open", !hidden);
+  }
+  btn.onclick = () => {
+    hidden = !hidden;
+    try { localStorage.setItem("dashHidden", hidden ? "1" : "0"); } catch {}
+    apply();
+  };
+  apply();
+})();
