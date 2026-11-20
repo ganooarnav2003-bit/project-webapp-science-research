@@ -1,0 +1,31 @@
+* { box-sizing: border-box; }
+body {
+  font-family: system-ui, sans-serif;
+  background: #f4f6fa;
+  color: #1c2333;
+  margin: 0;
+}
+header { background: #1f3a5f; color: #fff; padding: 24px 16px; text-align: center; }
+header h1 { margin: 0 0 6px; }
+header p { margin: 0; opacity: .8; }
+main { max-width: 700px; margin: 24px auto; padding: 0 16px; }
+form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+input, select, button { padding: 10px; border: 1px solid #c4cbd8; border-radius: 6px; font: inherit; }
+#title { flex: 1 1 200px; }
+#hypothesis { flex: 2 1 240px; }
+button { background: #2f6fed; color: #fff; border: none; cursor: pointer; }
+button:hover { background: #1f58c7; }
+#stats { margin-bottom: 12px; color: #55607a; font-size: .9rem; }
+ul { list-style: none; padding: 0; margin: 0; }
+li {
+  background: #fff; border-radius: 8px; padding: 12px 14px; margin-bottom: 8px;
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+li .info { flex: 1; }
+li .hyp { color: #55607a; font-size: .9rem; }
+.badge { font-size: .75rem; padding: 3px 8px; border-radius: 10px; cursor: pointer; background: #e0e6f3; }
+.badge.Running { background: #fff0c2; }
+.badge.Completed { background: #cdf2d8; }
+.del { background: transparent; color: #c0392b; padding: 4px 8px; }
+.del:hover { background: #fde8e6; }

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Research Notebook</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>🔬 Research Notebook</h1>
+    <p>Log experiments and track their results. Data is saved in your browser.</p>
+  </header>
+
+  <main>
+    <form id="form">
+      <input id="title" placeholder="Experiment title" required>
+      <input id="hypothesis" placeholder="Hypothesis">
+      <select id="status">
+        <option>Planned</option>
+        <option>Running</option>
+        <option>Completed</option>
+      </select>
+      <button type="submit">Add</button>
+    </form>
+
+    <div id="stats"></div>
+    <ul id="list"></ul>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
