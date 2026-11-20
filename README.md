@@ -37,3 +37,17 @@ npm start
 In the Razorpay dashboard add a webhook to `https://your-domain/api/billing/webhook` for the
 `payment.captured` and `order.paid` events. Amounts are always set by the server, and every payment
 is activated only after its signature is verified.
+
+## Flaskie chat assistant
+A floating flask-robot button (bottom right of every page) opens a chat that:
+- answers questions about the site (plans in ₹, uploading, subscribing, comments/queries),
+- searches the 100 topics and all shared uploads and links to the best matches,
+- optionally answers study questions with Claude (logged-in users only, 20 AI answers/hour each).
+
+AI answers are off until you set a key; without it the bot still does the search and site help:
+```bash
+export ANTHROPIC_API_KEY=sk-ant-xxx
+export CHAT_MODEL=claude-haiku-5-5   # optional, this is the default
+```
+When AI is on, the question text, recent chat turns and matching topic/upload titles are sent to Anthropic.
+Usernames are not sent. Mention this in your privacy policy.

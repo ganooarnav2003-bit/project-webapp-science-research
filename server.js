@@ -146,6 +146,118 @@ const safeEqual = (a, b) => {
 };
 const hmac = (secret, data) => crypto.createHmac("sha256", secret).update(data).digest("hex");
 
+/* ---------- Chat assistant: library search + optional Claude answers ---------- */
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
+const ANTHROPIC_URL = process.env.ANTHROPIC_API_URL || "https://api.anthropic.com/v1/messages";
+const CHAT_MODEL = process.env.CHAT_MODEL || "claude-haiku-5-5";
+const STOP = new Set("the and for are was what how why when who which with this that these those can you your about from have has into does did not but any all tell give show find explain please help need want like get use using been being more some than then them they their there here would could should will just also very much many such own same each other out our its it's is of to in on at as by an or be a i me my we do if so no yes".split(" "));
+const tokens = (s) => String(s).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !STOP.has(w)).map((w) => (w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w));
+
+const buckets = new Map();
+function rateLimit(key, max, windowMs) {
+  const now = Date.now();
+  const b = buckets.get(key);
+  if (!b || b.reset < now) { buckets.set(key, { n: 1, reset: now + windowMs }); return; }
+  if (++b.n > max) throw new HttpError(429, "You're sending messages too fast. Please wait a moment.");
+}
+
+function searchLibrary(msg) {
+  const q = tokens(msg);
+  if (!q.length) return { topics: [], uploads: [] };
+  const lower = msg.toLowerCase();
+  const topics = TOPICS.map((t) => {
+    const name = new Set(tokens(t.name)), body = new Set(tokens(t.summary + " " + t.subject));
+    let s = lower.includes(t.name.toLowerCase()) ? 6 : 0;
+    q.forEach((w) => { if (name.has(w)) s += 3; else if (body.has(w)) s += 1; });
+    return { t, s };
+  }).filter((x) => x.s >= 2).sort((a, b) => b.s - a.s).slice(0, 3).map((x) => x.t);
+  const uploads = db.uploads.map((u) => {
+    const title = new Set(tokens(u.title + " " + u.subject)), desc = new Set(tokens(u.description + " " + u.filename));
+    let s = 0;
+    q.forEach((w) => { if (title.has(w)) s += 3; else if (desc.has(w)) s += 1; });
+    return { u, s };
+  }).filter((x) => x.s >= 2).sort((a, b) => b.s - a.s || b.u.created - a.u.created).slice(0, 3).map((x) => x.u);
+  return { topics, uploads };
+}
+
+function siteAnswer(msg) {
+  const m = msg.toLowerCase();
+  const rs = (n) => "₹" + n.toLocaleString("en-IN");
+  if (/^(hi|hello|hey|namaste|good (morning|afternoon|evening))\b/.test(m)) {
+    return "Hi! I'm Flaskie, your study helper. Ask me about a topic (e.g. “photosynthesis”), search shared notes, or ask about plans and uploads.";
+  }
+  if (/\b(plans?|pric(e|es|ing)|cost|rupees?|upgrade|how much)\b/.test(m) || /₹|pay for/.test(m)) {
+    return "Plans (in ₹): " + Object.values(PLANS).map((p) =>
+      p.price.month ? `${p.name} ${rs(p.price.month)}/month or ${rs(p.price.year)}/year (${p.maxUploads === null ? "unlimited" : p.maxUploads} uploads, ${p.maxMB} MB each)`
+        : `${p.name} ${rs(0)} (${p.maxUploads} uploads, ${p.maxMB} MB each)`).join("; ") + ". Open the Plans tab to upgrade.";
+  }
+  if (/\bhow\b.*\b(upload|share)\b/.test(m) || /\bupload(ing)?\b.*\b(file|notes?)\b/.test(m)) {
+    return "To share study material: log in, open the Library tab, fill in the title and subject, choose a file (PDF, Word, PowerPoint, Excel, CSV, text or image), tick the study-material box and press Upload. Free accounts can upload 5 files of up to 5 MB.";
+  }
+  if (/\bhow\b.*\bsubscri/.test(m) || /\bsubscri(be|ption)s?\b.*\b(user|people|someone|uploader)/.test(m)) {
+    return "To follow someone, click “+ Subscribe” next to their upload in the Library (or open their profile by clicking @name). Their new uploads then appear under My subscriptions. Paid plans are separate: see the Plans tab.";
+  }
+  if (/\bhow\b.*\b(comment|query|queries|ask)\b/.test(m)) {
+    return "Under every upload, click “Comments”, write your message and tick “This is a query” if it's a question. The uploader can mark it answered.";
+  }
+  return null;
+}
+
+function resultLinks(found) {
+  return [
+    ...found.topics.map((t) => ({ type: "topic", title: t.name, detail: t.subject, url: "/topics/" + t.slug })),
+    ...found.uploads.map((u) => ({ type: "upload", title: u.title, detail: u.subject + " · by " + u.owner, url: "/api/files/" + u.id })),
+  ];
+}
+
+async function askClaude(msg, history, found) {
+  const ctx = [
+    ...found.topics.map((t) => `Topic "${t.name}" (${t.subject}): ${t.summary}`),
+    ...found.uploads.map((u) => `Shared file "${u.title}" (${u.subject}): ${u.description || "no description"}`),
+  ].join("\n");
+  const system = "You are Flaskie, a friendly study assistant inside a study-material sharing website. " +
+    "Answer study questions clearly and briefly (under 150 words), step by step when solving problems. " +
+    "Stay on study and learning topics. You cannot read the contents of shared files; only mention their titles. " +
+    "If you are not sure, say so.\n" + (ctx ? "Relevant items on this site:\n" + ctx : "");
+  const messages = [...history, { role: "user", content: msg }];
+  const r = await fetch(ANTHROPIC_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: CHAT_MODEL, max_tokens: 600, system, messages }),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!r.ok) throw new Error("status " + r.status);
+  const j = await r.json();
+  const text = (j.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n").trim();
+  if (!text) throw new Error("empty answer");
+  return text;
+}
+
+async function chat(req, me, body) {
+  rateLimit("chat:" + req.socket.remoteAddress, 30, 60 * 1000);
+  const msg = clean(body.message, 500);
+  if (!msg) throw new HttpError(400, "Type a question first");
+  const history = (Array.isArray(body.history) ? body.history : []).slice(-6)
+    .filter((h) => h && (h.role === "user" || h.role === "assistant") && typeof h.content === "string" && h.content.trim())
+    .map((h) => ({ role: h.role, content: clean(h.content, 800) }));
+  while (history.length && history[0].role !== "user") history.shift();
+
+  const site = siteAnswer(msg);
+  if (site) return { reply: site, results: [], source: "site" };
+
+  const found = searchLibrary(msg);
+  const results = resultLinks(found);
+
+  if (ANTHROPIC_KEY && me) {
+    rateLimit("ai:" + me.name, 20, 60 * 60 * 1000);
+    try { return { reply: await askClaude(msg, history, found), results, source: "ai" }; }
+    catch (e) { console.error("Claude chat failed:", e.message); }
+  }
+  if (results.length) return { reply: "Here's what I found in the library:", results, source: "search" };
+  const hint = ANTHROPIC_KEY && !me ? " Log in and I can also answer study questions in detail." : "";
+  return { reply: "I couldn't find anything for that yet. Try different keywords, browse the Topics page, or post it as a query under a related upload so the community can help." + hint, results: [], source: "search" };
+}
+
 function uploadView(u, me) {
   const cs = db.comments.filter((c) => c.uploadId === u.id);
   return {
@@ -193,6 +305,13 @@ async function api(req, res, url) {
   if (m === "GET" && p === "/api/me") {
     const u = currentUser(req);
     return send(res, 200, { user: u ? u.name : null, plan: u ? planView(u) : null });
+  }
+
+  if (m === "POST" && p === "/api/chat") {
+    return send(res, 200, await chat(req, currentUser(req), await readJson(req)));
+  }
+  if (m === "GET" && p === "/api/chat/status") {
+    return send(res, 200, { ai: !!ANTHROPIC_KEY });
   }
 
   // --- plans & billing (INR via Razorpay) ---
@@ -434,7 +553,7 @@ function htmlPage(res, title, desc, body, status = 200) {
 <link rel="stylesheet" href="/style.css"></head><body>
 <header><div><h1><a class="home" href="/">🔬 Research Notebook</a></h1><p>Free study topics and shared material</p></div>
 <nav class="pub-nav"><a href="/topics">Topics</a><a href="/#library">Library</a><a href="/#plans">Plans</a></nav></header>
-<main class="pub">${body}</main></body></html>`;
+<main class="pub">${body}</main><script src="/chatbot.js"></script></body></html>`;
   res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": CSP });
   res.end(html);
 }
