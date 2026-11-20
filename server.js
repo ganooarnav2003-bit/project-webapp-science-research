@@ -557,7 +557,7 @@ function htmlPage(res, title, desc, body, status = 200) {
 <meta name="description" content="${esc(desc)}">
 <link rel="stylesheet" href="/style.css"></head><body>
 <header><div><h1><a class="home" href="/">🔬 Research Notebook</a></h1><p>Free study topics and shared material</p></div>
-<nav class="pub-nav"><a href="/topics">Topics</a><a href="/#library">Library</a><a href="/#plans">Plans</a></nav></header>
+<nav class="pub-nav"><a href="/topics">Topics</a><a href="/#library">Library</a><a href="/plans">Plans &amp; pricing</a></nav></header>
 <main class="pub">${body}</main><script src="/chatbot.js"></script></body></html>`;
   res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": CSP });
   res.end(html);
@@ -598,9 +598,20 @@ ${more.length ? `<h3>More ${esc(t.subject)} material</h3>${uploadsHtml(more)}` :
   htmlPage(res, t.name, t.summary, body);
 }
 
+function plansPage(res) {
+  const rs = (n) => "₹" + n.toLocaleString("en-IN");
+  const cards = Object.values(PLANS).map((p) => `<div class="card plan"><h3>${esc(p.name)}</h3>
+<div class="price">${rs(p.price.month)}<small>${p.price.month ? " / month" : " forever"}</small></div>
+${p.price.year ? `<p class="empty">or ${rs(p.price.year)} / year (save ${rs(p.price.month * 12 - p.price.year)})</p>` : ""}
+<ul class="feat">${p.features.map((f) => `<li>✓ ${esc(f)}</li>`).join("")}</ul>
+<a class="btn" href="/#plans">${p.price.month ? "Choose " + esc(p.name) : "Get started"}</a></div>`).join("");
+  htmlPage(res, "Plans and pricing", "Subscription plans in Indian rupees: Free, Student and Pro.",
+    `<h2>Plans &amp; pricing</h2><p class="notice">All prices are in Indian rupees (₹). Everyone can browse, download and comment for free; paid plans add upload space.</p><div class="plans">${cards}</div>`);
+}
+
 function siteMap(req, res) {
   const base = PUBLIC_URL || "http://" + (req.headers.host || "localhost");
-  const urls = ["/", "/topics", ...TOPICS.map((t) => "/topics/" + t.slug)];
+  const urls = ["/", "/topics", "/plans", ...TOPICS.map((t) => "/topics/" + t.slug)];
   res.writeHead(200, { "Content-Type": "application/xml; charset=utf-8" });
   res.end(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
     urls.map((u) => `<url><loc>${esc(base + u)}</loc></url>`).join("\n") + `\n</urlset>`);
@@ -611,6 +622,7 @@ async function handler(req, res) {
     const url = new URL(req.url, "http://localhost");
     if (url.pathname === "/healthz") send(res, 200, { ok: true });
     else if (url.pathname.startsWith("/api/")) await api(req, res, url);
+    else if (req.method === "GET" && url.pathname === "/plans") plansPage(res);
     else if (req.method === "GET" && url.pathname === "/topics") topicsIndex(res);
     else if (req.method === "GET" && /^\/topics\/[a-z0-9-]+$/.test(url.pathname)) topicPage(res, url.pathname.slice(8));
     else if (req.method === "GET" && url.pathname === "/sitemap.xml") siteMap(req, res);

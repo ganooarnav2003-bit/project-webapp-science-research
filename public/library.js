@@ -394,7 +394,13 @@
   }
 
   /* ---------- Init ---------- */
+  $("priceChip").addEventListener("click", (e) => { e.preventDefault(); showView("plans"); });
   (async () => {
+    try {
+      const pl = await api("/api/plans");
+      const min = Math.min(...Object.values(pl.plans).map((p) => p.price.month).filter(Boolean));
+      $("priceChip").textContent = "Plans from " + rupees(min) + "/month";
+    } catch {}
     await loadMe();
     renderAuth();
     const v = location.hash.replace("#", "");
