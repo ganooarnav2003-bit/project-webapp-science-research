@@ -22,6 +22,8 @@
     <button data-view="dashboard" class="active">Dashboard</button>
     <button data-view="library">Library</button>
     <button data-view="feed">My subscriptions</button>
+    <button data-view="plans">Plans (₹)</button>
+    <a class="tab-link" href="/topics">Topics</a>
   </nav>
 
   <aside id="panel" hidden>
@@ -102,7 +104,7 @@
         <input id="upFile" type="file" required
           accept=".pdf,.txt,.md,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.gif,.webp">
         <label class="check"><input type="checkbox" id="upConfirm" required> This is study/educational material and I have the right to share it.</label>
-        <small>Allowed: PDF, text, Word, PowerPoint, Excel, CSV, images · max 10 MB</small>
+        <small id="upLimits">Allowed: PDF, text, Word, PowerPoint, Excel, CSV, images</small>
         <button type="submit">Upload</button>
         <p id="upMsg" class="error"></p>
       </form>
@@ -114,6 +116,18 @@
       </div>
       <div id="userBanner" class="card" hidden></div>
       <div id="libraryList"></div>
+    </div>
+
+    <!-- Paid plans (INR) -->
+    <div id="view-plans" class="view" hidden>
+      <h2>Plans</h2>
+      <p class="notice">Prices are in Indian rupees (₹). Everyone can browse, download and comment for free; paid plans give you more upload space.</p>
+      <div class="toggle" id="intervalToggle">
+        <button data-interval="month" class="on">Monthly</button>
+        <button data-interval="year">Yearly <span class="chip ok">2 months free</span></button>
+      </div>
+      <p id="planMsg" class="error"></p>
+      <div id="planCards" class="plans"></div>
     </div>
 
     <!-- Subscription feed -->

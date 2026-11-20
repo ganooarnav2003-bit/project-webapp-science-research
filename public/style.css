@@ -170,3 +170,30 @@ button.on { background: var(--chip); color: var(--text); }
 .dash-head h2 { margin: 24px 0 12px; }
 .menu-btn { font-size: 1.3rem; line-height: 1; padding: 6px 12px; background: var(--card); color: var(--text); border: 1px solid var(--border); }
 .menu-btn.open { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+
+/* ---------- Plans & public pages ---------- */
+.tab-link { padding: 12px 14px; color: var(--muted); text-decoration: none; margin-left: auto; align-self: center; }
+.tab-link:hover { color: var(--accent); }
+.planchip { background: rgba(255,255,255,.18); color: #fff; }
+.toggle { display: inline-flex; gap: 4px; margin: 8px 0 14px; background: var(--chip); padding: 4px; border-radius: 8px; }
+.toggle button { background: transparent; color: var(--muted); }
+.toggle button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.plans { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.plan { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.plan h3 { margin: 0; }
+.plan.current { outline: 2px solid var(--accent); }
+.price { font-size: 2rem; font-weight: 700; color: var(--accent); }
+.price small { font-size: .85rem; color: var(--muted); font-weight: 400; }
+.feat { list-style: none; padding: 0; margin: 0 0 6px; flex: 1; font-size: .92rem; }
+.feat li { padding: 3px 0; }
+
+.pub-nav { display: flex; gap: 14px; align-items: center; }
+.pub-nav a, a.home { color: #fff; text-decoration: none; }
+.pub-nav a:hover { text-decoration: underline; }
+main.pub a { color: var(--accent); }
+main.pub .btn { color: var(--on-accent); }
+.lead { font-size: 1.1rem; line-height: 1.55; }
+.subject-block h3 { margin: 22px 0 8px; }
+.topic-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.topic-link { background: var(--card); padding: 10px 12px; border-radius: 8px; text-decoration: none; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.topic-link:hover { outline: 2px solid var(--accent); }

@@ -10,8 +10,28 @@ const DATA = path.join(__dirname, "data");
 const UPLOADS = path.join(DATA, "uploads");
 const DB_FILE = path.join(DATA, "db.json");
 
-const MAX_UPLOAD = 10 * 1024 * 1024; // 10 MB
+const { TOPICS, SUBJECTS } = require("./topics");
+
+const MAX_UPLOAD = 25 * 1024 * 1024; // hard cap; each plan has its own lower limit
 const MAX_JSON = 100 * 1024;
+
+// Subscription plans. Prices are in rupees (INR); null = unlimited.
+const PLANS = {
+  free: { name: "Free", price: { month: 0, year: 0 }, maxUploads: 5, maxMB: 5,
+    features: ["Browse & download all study material", "Comment and ask queries", "Upload up to 5 files (5 MB each)"] },
+  student: { name: "Student", price: { month: 199, year: 1999 }, maxUploads: 50, maxMB: 10,
+    features: ["Everything in Free", "Upload up to 50 files (10 MB each)", "Priority listing for your uploads"] },
+  pro: { name: "Pro", price: { month: 499, year: 4999 }, maxUploads: null, maxMB: 25,
+    features: ["Everything in Student", "Unlimited uploads (25 MB each)", "Best for teachers and study groups"] },
+};
+const DAY = 24 * 60 * 60 * 1000;
+
+// Razorpay (set these environment variables to switch on payments)
+const RZP_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
+const RZP_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
+const RZP_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || "";
+const RZP_API = process.env.RAZORPAY_API || "https://api.razorpay.com";
+const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/$/, "");
 // Study-material file types only
 const ALLOWED_EXT = new Set([
   ".pdf", ".txt", ".md", ".doc", ".docx", ".ppt", ".pptx",
@@ -21,7 +41,7 @@ const ALLOWED_EXT = new Set([
 fs.mkdirSync(UPLOADS, { recursive: true });
 
 /* ---------- Tiny JSON "database" ---------- */
-let db = { users: [], sessions: {}, uploads: [], comments: [], subs: [] };
+let db = { users: [], sessions: {}, uploads: [], comments: [], subs: [], orders: [] };
 if (fs.existsSync(DB_FILE)) db = Object.assign(db, JSON.parse(fs.readFileSync(DB_FILE, "utf8")));
 function persist() {
   const tmp = DB_FILE + ".tmp";
@@ -99,6 +119,33 @@ function clean(s, max) {
   return String(s ?? "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "").trim().slice(0, max);
 }
 
+function planOf(user) {
+  const p = user && user.plan;
+  const id = p && p.expires > Date.now() && PLANS[p.id] ? p.id : "free";
+  return { id, ...PLANS[id], expires: id === "free" ? null : p.expires, interval: id === "free" ? null : p.interval };
+}
+function planView(user) {
+  const p = planOf(user);
+  return { id: p.id, name: p.name, expires: p.expires, interval: p.interval, maxUploads: p.maxUploads, maxMB: p.maxMB,
+    uploadsUsed: db.uploads.filter((u) => u.owner === user.name).length };
+}
+function activateOrder(order) {
+  if (order.status === "paid") return;
+  const user = db.users.find((u) => u.name === order.user);
+  if (!user) return;
+  const now = Date.now();
+  const same = user.plan && user.plan.id === order.plan && user.plan.expires > now;
+  const base = same ? user.plan.expires : now;
+  user.plan = { id: order.plan, interval: order.interval, expires: base + (order.interval === "year" ? 365 : 30) * DAY };
+  order.status = "paid";
+  persist();
+}
+const safeEqual = (a, b) => {
+  const x = Buffer.from(String(a)), y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+};
+const hmac = (secret, data) => crypto.createHmac("sha256", secret).update(data).digest("hex");
+
 function uploadView(u, me) {
   const cs = db.comments.filter((c) => c.uploadId === u.id);
   return {
@@ -145,7 +192,61 @@ async function api(req, res, url) {
   }
   if (m === "GET" && p === "/api/me") {
     const u = currentUser(req);
-    return send(res, 200, { user: u ? u.name : null });
+    return send(res, 200, { user: u ? u.name : null, plan: u ? planView(u) : null });
+  }
+
+  // --- plans & billing (INR via Razorpay) ---
+  if (m === "GET" && p === "/api/plans") {
+    return send(res, 200, { currency: "INR", plans: PLANS, paymentsEnabled: !!(RZP_KEY_ID && RZP_KEY_SECRET), keyId: RZP_KEY_ID || null });
+  }
+  if (m === "POST" && p === "/api/billing/order") {
+    const me = requireUser(req);
+    if (!RZP_KEY_ID || !RZP_KEY_SECRET) throw new HttpError(503, "Online payments are not switched on yet");
+    const { plan, interval } = await readJson(req);
+    if (!PLANS[plan] || plan === "free" || !["month", "year"].includes(interval)) throw new HttpError(400, "Choose a paid plan and billing period");
+    const amount = PLANS[plan].price[interval]; // always taken from the server, never the client
+    const local = crypto.randomUUID();
+    let rz;
+    try {
+      const r2 = await fetch(RZP_API + "/v1/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Basic " + Buffer.from(RZP_KEY_ID + ":" + RZP_KEY_SECRET).toString("base64") },
+        body: JSON.stringify({ amount: amount * 100, currency: "INR", receipt: "rcpt_" + local.slice(0, 30) }),
+      });
+      if (!r2.ok) throw new Error("status " + r2.status);
+      rz = await r2.json();
+    } catch (e) {
+      console.error("Razorpay order failed:", e.message);
+      throw new HttpError(502, "Could not start payment, please try again");
+    }
+    db.orders.push({ id: rz.id, user: me.name, plan, interval, amount, status: "created", created: Date.now() });
+    persist();
+    return send(res, 200, { orderId: rz.id, amount: amount * 100, currency: "INR", keyId: RZP_KEY_ID, plan: PLANS[plan].name });
+  }
+  if (m === "POST" && p === "/api/billing/verify") {
+    const me = requireUser(req);
+    const b = await readJson(req);
+    const order = db.orders.find((o) => o.id === b.razorpay_order_id && o.user === me.name);
+    if (!order) throw new HttpError(404, "Order not found");
+    const expected = hmac(RZP_KEY_SECRET, order.id + "|" + String(b.razorpay_payment_id));
+    if (!RZP_KEY_SECRET || !safeEqual(expected, b.razorpay_signature)) throw new HttpError(400, "Payment could not be verified");
+    order.paymentId = String(b.razorpay_payment_id);
+    activateOrder(order);
+    return send(res, 200, { plan: planView(me) });
+  }
+  if (m === "POST" && p === "/api/billing/webhook") {
+    // Backup path: Razorpay tells us a payment was captured even if the browser closed early.
+    if (!RZP_WEBHOOK_SECRET) throw new HttpError(503, "Webhook not configured");
+    const raw = await readBody(req, MAX_JSON);
+    if (!safeEqual(hmac(RZP_WEBHOOK_SECRET, raw), req.headers["x-razorpay-signature"] || "")) throw new HttpError(400, "Bad signature");
+    let ev;
+    try { ev = JSON.parse(raw.toString("utf8")); } catch { throw new HttpError(400, "Bad JSON"); }
+    const pay = ev && ev.payload && ev.payload.payment && ev.payload.payment.entity;
+    if (pay && ["payment.captured", "order.paid"].includes(ev.event)) {
+      const order = db.orders.find((o) => o.id === pay.order_id);
+      if (order && pay.amount === order.amount * 100 && pay.currency === "INR") { order.paymentId = pay.id; activateOrder(order); }
+    }
+    return send(res, 200, { ok: true });
   }
 
   // --- uploads ---
@@ -177,9 +278,16 @@ async function api(req, res, url) {
     const title = clean(dec(h["x-title"]), 100);
     const subject = clean(dec(h["x-subject"]), 40);
     if (!title || !subject) throw new HttpError(400, "Title and subject are required");
-    if (Number(h["content-length"]) > MAX_UPLOAD) throw new HttpError(413, "Max file size is 10 MB");
+    const plan = planOf(me);
+    const used = db.uploads.filter((x) => x.owner === me.name).length;
+    if (plan.maxUploads !== null && used >= plan.maxUploads) {
+      throw new HttpError(403, `Your ${plan.name} plan allows ${plan.maxUploads} uploads. Upgrade your plan to upload more.`);
+    }
+    const limit = plan.maxMB * 1024 * 1024;
+    if (Number(h["content-length"]) > limit) throw new HttpError(413, `Your ${plan.name} plan allows files up to ${plan.maxMB} MB`);
     const body = await readBody(req, MAX_UPLOAD);
     if (!body.length) throw new HttpError(400, "Empty file");
+    if (body.length > limit) throw new HttpError(413, `Your ${plan.name} plan allows files up to ${plan.maxMB} MB`);
     const id = crypto.randomUUID();
     fs.writeFileSync(path.join(UPLOADS, id + ext), body);
     const rec = { id, title, subject, description: clean(dec(h["x-description"]), 500), filename, ext, size: body.length, owner: me.name, created: Date.now() };
@@ -304,15 +412,87 @@ function serveStatic(req, res, url) {
   res.writeHead(200, {
     "Content-Type": MIME[path.extname(file)] || "application/octet-stream",
     "X-Content-Type-Options": "nosniff",
-    "Content-Security-Policy": "default-src 'self'",
+    "Content-Security-Policy": CSP,
   });
   fs.createReadStream(file).pipe(res);
+}
+
+/* ---------- Public topic pages (server-rendered, no login needed) ---------- */
+// Razorpay Checkout needs its own script, frame and network hosts.
+const CSP = "default-src 'self'; script-src 'self' https://checkout.razorpay.com; " +
+  "frame-src https://api.razorpay.com https://checkout.razorpay.com; " +
+  "connect-src 'self' https://*.razorpay.com; img-src 'self' data: https://*.razorpay.com";
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtSize = (n) => (n < 1048576 ? Math.max(1, Math.round(n / 1024)) + " KB" : (n / 1048576).toFixed(1) + " MB");
+
+function htmlPage(res, title, desc, body, status = 200) {
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)} | Research Notebook</title>
+<meta name="description" content="${esc(desc)}">
+<link rel="stylesheet" href="/style.css"></head><body>
+<header><div><h1><a class="home" href="/">🔬 Research Notebook</a></h1><p>Free study topics and shared material</p></div>
+<nav class="pub-nav"><a href="/topics">Topics</a><a href="/#library">Library</a><a href="/#plans">Plans</a></nav></header>
+<main class="pub">${body}</main></body></html>`;
+  res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": CSP });
+  res.end(html);
+}
+
+function uploadsHtml(list) {
+  if (!list.length) return `<p class="empty">No shared files yet. <a href="/#library">Be the first to upload one.</a></p>`;
+  return list.map((u) => `<article class="card"><strong>${esc(u.title)}</strong>
+<div class="meta"><span class="chip">${esc(u.subject)}</span> by ${esc(u.owner)} · ${esc(u.filename)} (${fmtSize(u.size)})</div>
+${u.description ? `<p class="desc">${esc(u.description)}</p>` : ""}
+<a class="btn" href="/api/files/${encodeURIComponent(u.id)}">⬇ Download</a></article>`).join("");
+}
+
+function topicsIndex(res) {
+  const body = `<h2>Study topics</h2><p class="notice">${TOPICS.length} free topic pages across ${SUBJECTS.length} subjects. Open any topic to see a short overview and the study material shared by the community.</p>` +
+    SUBJECTS.map((s) => `<section class="subject-block"><h3>${esc(s)}</h3><div class="topic-grid">` +
+      TOPICS.filter((t) => t.subject === s).map((t) => `<a class="topic-link" href="/topics/${t.slug}">${esc(t.name)}</a>`).join("") +
+      `</div></section>`).join("");
+  htmlPage(res, "Study topics", `Browse ${TOPICS.length} study topics across ${SUBJECTS.length} subjects.`, body);
+}
+
+function topicPage(res, slug) {
+  const t = TOPICS.find((x) => x.slug === slug);
+  if (!t) return htmlPage(res, "Not found", "Topic not found", `<h2>Topic not found</h2><p><a href="/topics">See all topics</a></p>`, 404);
+  const needle = t.name.toLowerCase();
+  const hay = (u) => [u.title, u.description].join(" ").toLowerCase();
+  const direct = db.uploads.filter((u) => hay(u).includes(needle)).sort((a, b) => b.created - a.created).slice(0, 20);
+  const ids = new Set(direct.map((u) => u.id));
+  const more = db.uploads.filter((u) => u.subject.toLowerCase() === t.subject.toLowerCase() && !ids.has(u.id))
+    .sort((a, b) => b.created - a.created).slice(0, 10);
+  const related = TOPICS.filter((x) => x.subject === t.subject && x.slug !== t.slug).slice(0, 6);
+  const body = `<p><a href="/topics">← All topics</a></p><h2>${esc(t.name)}</h2><p><span class="chip">${esc(t.subject)}</span></p>
+<p class="lead">${esc(t.summary)}</p>
+<h3>Study material on ${esc(t.name)}</h3>${uploadsHtml(direct)}
+${more.length ? `<h3>More ${esc(t.subject)} material</h3>${uploadsHtml(more)}` : ""}
+<h3>Related topics</h3><div class="topic-grid">${related.map((x) => `<a class="topic-link" href="/topics/${x.slug}">${esc(x.name)}</a>`).join("")}</div>
+<p class="notice">Have notes on this topic? <a href="/#library">Log in and share them</a>, or <a href="/#plans">see plans in ₹</a> for more upload space.</p>`;
+  htmlPage(res, t.name, t.summary, body);
+}
+
+function siteMap(req, res) {
+  const base = PUBLIC_URL || "http://" + (req.headers.host || "localhost");
+  const urls = ["/", "/topics", ...TOPICS.map((t) => "/topics/" + t.slug)];
+  res.writeHead(200, { "Content-Type": "application/xml; charset=utf-8" });
+  res.end(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+    urls.map((u) => `<url><loc>${esc(base + u)}</loc></url>`).join("\n") + `\n</urlset>`);
 }
 
 http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, "http://localhost");
     if (url.pathname.startsWith("/api/")) await api(req, res, url);
+    else if (req.method === "GET" && url.pathname === "/topics") topicsIndex(res);
+    else if (req.method === "GET" && /^\/topics\/[a-z0-9-]+$/.test(url.pathname)) topicPage(res, url.pathname.slice(8));
+    else if (req.method === "GET" && url.pathname === "/sitemap.xml") siteMap(req, res);
+    else if (req.method === "GET" && url.pathname === "/robots.txt") {
+      const base = PUBLIC_URL || "http://" + (req.headers.host || "localhost");
+      send(res, 200, `User-agent: *\nAllow: /\nDisallow: /api/\nSitemap: ${base}/sitemap.xml\n`);
+    }
     else if (req.method === "GET") serveStatic(req, res, url);
     else send(res, 405, "Method not allowed");
   } catch (e) {

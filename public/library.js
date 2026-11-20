@@ -10,6 +10,9 @@
   };
 
   let me = null;
+  let myPlan = null;
+  let planInfo = null;
+  let interval = "month";
   let userFilter = "";
 
   async function api(path, opts = {}) {
@@ -31,6 +34,7 @@
     document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== "view-" + name));
     if (name === "library") loadLibrary();
     if (name === "feed") loadFeed();
+    if (name === "plans") loadPlans();
   }
   document.querySelectorAll("#tabs button").forEach((b) => (b.onclick = () => showView(b.dataset.view)));
 
@@ -54,6 +58,7 @@
         username: $("authUser").value, password: $("authPass").value,
       });
       me = r.user;
+      await loadMe();
       $("authForm").reset();
       $("authDialog").close();
       renderAuth();
@@ -66,8 +71,9 @@
     a.innerHTML = "";
     if (me) {
       a.append(el("span", "who", "👤 " + me));
+      if (myPlan) a.append(el("span", "chip planchip", myPlan.name));
       const out = el("button", "ghost", "Log out");
-      out.onclick = async () => { await post("/api/logout"); me = null; renderAuth(); refreshActive(); };
+      out.onclick = async () => { await post("/api/logout"); me = null; myPlan = null; renderAuth(); refreshActive(); };
       a.append(out);
     } else {
       const li = el("button", "ghost", "Log in");
@@ -78,6 +84,93 @@
     }
     $("uploadForm").hidden = !me;
     $("loginHint").hidden = !!me;
+    if (me && myPlan) {
+      const left = myPlan.maxUploads === null ? "unlimited uploads" : `${myPlan.uploadsUsed} of ${myPlan.maxUploads} uploads used`;
+      $("upLimits").textContent = `Allowed: PDF, text, Word, PowerPoint, Excel, CSV, images · ${myPlan.name} plan: ${left}, up to ${myPlan.maxMB} MB per file`;
+    }
+  }
+
+  async function loadMe() {
+    try { const r = await api("/api/me"); me = r.user; myPlan = r.plan; } catch { me = null; myPlan = null; }
+  }
+
+  /* ---------- Plans (INR) ---------- */
+  const rupees = (n) => "₹" + n.toLocaleString("en-IN");
+  document.querySelectorAll("#intervalToggle button").forEach((b) => (b.onclick = () => {
+    interval = b.dataset.interval;
+    document.querySelectorAll("#intervalToggle button").forEach((x) => x.classList.toggle("on", x === b));
+    renderPlans();
+  }));
+
+  async function loadPlans() {
+    $("planMsg").textContent = "";
+    try { planInfo = await api("/api/plans"); } catch (err) { $("planMsg").textContent = err.message; return; }
+    await loadMe();
+    renderAuth();
+    renderPlans();
+  }
+
+  function renderPlans() {
+    const box = $("planCards");
+    box.innerHTML = "";
+    if (!planInfo) return;
+    Object.entries(planInfo.plans).forEach(([id, p]) => {
+      const card = el("div", "card plan" + (myPlan && myPlan.id === id ? " current" : ""));
+      card.append(el("h3", "", p.name));
+      const price = el("div", "price");
+      price.append(document.createTextNode(rupees(p.price[interval])));
+      price.append(el("small", "", id === "free" ? " forever" : interval === "year" ? " / year" : " / month"));
+      card.append(price);
+      const ul = el("ul", "feat");
+      p.features.forEach((f) => ul.append(el("li", "", "✓ " + f)));
+      card.append(ul);
+      if (myPlan && myPlan.id === id) {
+        card.append(el("p", "empty", myPlan.expires ? "Current plan · renews/ends " + new Date(myPlan.expires).toLocaleDateString() : "Your current plan"));
+      }
+      if (id !== "free") {
+        const label = myPlan && myPlan.id === id ? "Extend" : "Choose " + p.name;
+        const btn = el("button", "", label + " · " + rupees(p.price[interval]));
+        btn.onclick = () => buy(id, btn);
+        card.append(btn);
+      }
+      box.append(card);
+    });
+    if (!planInfo.paymentsEnabled) $("planMsg").textContent = "Online payments are not switched on for this site yet.";
+  }
+
+  function loadScript(src) {
+    return new Promise((ok, fail) => {
+      if (window.Razorpay) return ok();
+      const s = document.createElement("script");
+      s.src = src; s.onload = ok; s.onerror = () => fail(new Error("Could not load the payment window"));
+      document.head.append(s);
+    });
+  }
+
+  async function buy(plan, btn) {
+    const msg = $("planMsg");
+    msg.textContent = "";
+    if (!me) { openAuth(false); return; }
+    btn.disabled = true;
+    try {
+      const o = await post("/api/billing/order", { plan, interval });
+      await loadScript("https://checkout.razorpay.com/v1/checkout.js");
+      const rz = new window.Razorpay({
+        key: o.keyId, amount: o.amount, currency: o.currency, order_id: o.orderId,
+        name: "Research Notebook", description: o.plan + " plan (" + interval + "ly)",
+        handler: async (resp) => {
+          try {
+            await post("/api/billing/verify", resp);
+            await loadMe(); renderAuth(); renderPlans();
+            msg.textContent = "";
+            alert("Payment successful. Your plan is now active.");
+          } catch (err) { msg.textContent = err.message; }
+        },
+        modal: { ondismiss: () => { btn.disabled = false; } },
+      });
+      rz.open();
+    } catch (err) { msg.textContent = err.message; }
+    btn.disabled = false;
   }
 
   function activeView() {
@@ -255,7 +348,8 @@
     const msg = $("upMsg");
     msg.textContent = "";
     if (!file) return;
-    if (file.size > 10 * 1024 * 1024) { msg.textContent = "Max file size is 10 MB"; return; }
+    const maxMB = myPlan ? myPlan.maxMB : 5;
+    if (file.size > maxMB * 1024 * 1024) { msg.textContent = `Your plan allows files up to ${maxMB} MB. See Plans to upgrade.`; return; }
     try {
       await api("/api/uploads", {
         method: "POST",
@@ -270,6 +364,7 @@
         body: file,
       });
       e.target.reset();
+      await loadMe(); renderAuth();
       loadLibrary();
     } catch (err) { msg.textContent = err.message; }
   });
@@ -300,7 +395,9 @@
 
   /* ---------- Init ---------- */
   (async () => {
-    try { me = (await api("/api/me")).user; } catch { me = null; }
+    await loadMe();
     renderAuth();
+    const v = location.hash.replace("#", "");
+    if (["library", "feed", "plans"].includes(v)) showView(v);
   })();
 })();
