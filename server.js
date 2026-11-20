@@ -6,7 +6,7 @@ const crypto = require("crypto");
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC = path.join(__dirname, "public");
-const DATA = path.join(__dirname, "data");
+const DATA = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, "data");
 const UPLOADS = path.join(DATA, "uploads");
 const DB_FILE = path.join(DATA, "db.json");
 
@@ -53,6 +53,11 @@ function persist() {
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
+// Behind a host/proxy (Render, Railway, Heroku, nginx...) the socket address is the proxy's,
+// so rate limits would be shared by everyone. Set TRUST_PROXY=1 to use X-Forwarded-For.
+const TRUST_PROXY = process.env.TRUST_PROXY === "1";
+const clientIp = (req) => (TRUST_PROXY && String(req.headers["x-forwarded-for"] || "").split(",")[0].trim()) || req.socket.remoteAddress;
+const isHttps = (req) => req.socket.encrypted || (TRUST_PROXY && req.headers["x-forwarded-proto"] === "https");
 const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
 
 function send(res, status, body, headers = {}) {
@@ -107,7 +112,7 @@ function requireUser(req) {
 // Basic brute-force protection on login/register
 const attempts = new Map();
 function throttle(req) {
-  const ip = req.socket.remoteAddress;
+  const ip = clientIp(req);
   const now = Date.now();
   const a = attempts.get(ip) && attempts.get(ip).reset > now ? attempts.get(ip) : { n: 0, reset: now + 15 * 60 * 1000 };
   a.n++;
@@ -234,7 +239,7 @@ async function askClaude(msg, history, found) {
 }
 
 async function chat(req, me, body) {
-  rateLimit("chat:" + req.socket.remoteAddress, 30, 60 * 1000);
+  rateLimit("chat:" + clientIp(req), 30, 60 * 1000);
   const msg = clean(body.message, 500);
   if (!msg) throw new HttpError(400, "Type a question first");
   const history = (Array.isArray(body.history) ? body.history : []).slice(-6)
@@ -286,7 +291,7 @@ async function api(req, res, url) {
     if (db.users.some((u) => u.name === name)) throw new HttpError(409, "Username already taken");
     const salt = crypto.randomBytes(16).toString("hex");
     db.users.push({ name, salt, hash: crypto.scryptSync(password, salt, 64).toString("hex"), created: Date.now() });
-    return startSession(res, name);
+    return startSession(req, res, name);
   }
   if (m === "POST" && p === "/api/login") {
     throttle(req);
@@ -295,7 +300,7 @@ async function api(req, res, url) {
     const ok = u && typeof password === "string" &&
       crypto.timingSafeEqual(Buffer.from(u.hash, "hex"), crypto.scryptSync(password, u.salt, 64));
     if (!ok) throw new HttpError(401, "Wrong username or password");
-    return startSession(res, u.name);
+    return startSession(req, res, u.name);
   }
   if (m === "POST" && p === "/api/logout") {
     const sid = parseCookies(req).sid;
@@ -510,12 +515,12 @@ async function api(req, res, url) {
   throw new HttpError(404, "Unknown API route");
 }
 
-function startSession(res, name) {
+function startSession(req, res, name) {
   const sid = crypto.randomBytes(32).toString("hex");
   db.sessions[sha(sid)] = name;
   persist();
   send(res, 200, { user: name }, {
-    "Set-Cookie": `sid=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}`,
+    "Set-Cookie": `sid=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}` + (isHttps(req) ? "; Secure" : ""),
   });
 }
 
@@ -604,7 +609,8 @@ function siteMap(req, res) {
 http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, "http://localhost");
-    if (url.pathname.startsWith("/api/")) await api(req, res, url);
+    if (url.pathname === "/healthz") send(res, 200, { ok: true });
+    else if (url.pathname.startsWith("/api/")) await api(req, res, url);
     else if (req.method === "GET" && url.pathname === "/topics") topicsIndex(res);
     else if (req.method === "GET" && /^\/topics\/[a-z0-9-]+$/.test(url.pathname)) topicPage(res, url.pathname.slice(8));
     else if (req.method === "GET" && url.pathname === "/sitemap.xml") siteMap(req, res);
@@ -620,4 +626,4 @@ http.createServer(async (req, res) => {
       else { console.error(e); send(res, 500, { error: "Server error" }); }
     }
   }
-}).listen(PORT, () => console.log(`Study library running at http://localhost:${PORT}`));
+}).listen(PORT, "0.0.0.0", () => console.log(`Study library running on port ${PORT}`));
