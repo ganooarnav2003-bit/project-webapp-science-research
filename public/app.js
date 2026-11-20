@@ -2,7 +2,7 @@ const STATUSES = ["Planned", "Running", "Completed"];
 const $ = (id) => document.getElementById(id);
 
 const DEFAULTS = {
-  accent: "#2f6fed",
+  accent: "", // empty = use the theme's default professional blue
   theme: "light",
   columns: 2,
   title: "Dashboard",
@@ -36,6 +36,7 @@ DEFAULTS.widgets.forEach((w) => {
   if (!settings.widgets.some((x) => x.id === w.id)) settings.widgets.push(clone(w));
 });
 
+if (settings.accent === "#2f6fed") settings.accent = ""; // migrate old default colour
 const saveItems = () => localStorage.setItem("experiments", JSON.stringify(items));
 const saveSettings = () => localStorage.setItem("dashSettings", JSON.stringify(settings));
 
@@ -110,7 +111,8 @@ function renderDashboard() {
 /* ---------- Appearance ---------- */
 function applyAppearance() {
   const root = document.documentElement;
-  root.style.setProperty("--accent", settings.accent);
+  if (settings.accent) root.style.setProperty("--accent", settings.accent);
+  else root.style.removeProperty("--accent");
   root.style.setProperty("--cols", settings.columns);
   root.dataset.theme = settings.theme;
   $("dashHeading").textContent = settings.title || "Dashboard";
@@ -166,7 +168,7 @@ $("resetBtn").onclick = () => {
 };
 
 function syncControls() {
-  $("accent").value = settings.accent;
+  $("accent").value = settings.accent || "#1f5fa8";
   $("theme").value = settings.theme;
   $("columns").value = String(settings.columns);
   $("dashTitle").value = settings.title;
